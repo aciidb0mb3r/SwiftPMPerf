@@ -43,38 +43,41 @@ public protocol ByteStreamable {
 public class OutputByteStream: TextOutputStream {
     /// The data buffer.
     /// Note: Minimum Buffer size should be one.
-    private var buffer: [UInt8]
+    //private var buffer: [UInt8]
+    var buffer: UnsafeMutablePointer<UInt8>
+    var count = 0
 
     /// Default buffer size of the data buffer.
     private static let bufferSize = 1024
 
     init() {
-        self.buffer = []
-        self.buffer.reserveCapacity(OutputByteStream.bufferSize)
+        self.buffer = UnsafeMutablePointer.allocate(capacity: 1024)
+     //   self.buffer = []
+     //   self.buffer.reserveCapacity(OutputByteStream.bufferSize)
     }
 
     // MARK: Data Access API
 
     /// The current offset within the output stream.
     public final var position: Int {
-        return buffer.count
+        return count
     }
 
     /// Currently available buffer size.
     private var availableBufferSize: Int {
-        return buffer.capacity - buffer.count
+        return 1024 - count
     }
 
      /// Clears the buffer maintaining current capacity.
     private func clearBuffer() {
-        buffer.removeAll(keepingCapacity: true)
+        count = 0
+        //buffer.removeAll(keepingCapacity: true)
     }
 
     // MARK: Data Output API
     private func dump() {
-        buffer.withUnsafeBufferPointer { ptr in
-            writeImpl(ptr)
-        }
+        let buf = UnsafeBufferPointer(start: buffer, count: count)
+        writeImpl(buf)
     }
 
     public final func flush() {
@@ -102,7 +105,8 @@ public class OutputByteStream: TextOutputStream {
 
         // This will need to change change if we ever have unbuffered stream.
         precondition(availableBufferSize > 0)
-        buffer.append(byte)
+        buffer[count] = byte
+        count += 1
     }
 
     /// Write the contents of a UnsafeBufferPointer<UInt8>.
@@ -113,7 +117,7 @@ public class OutputByteStream: TextOutputStream {
         // If we have to insert more than the available space in buffer.
         if bytes.count > availableBufferSize {
             // If buffer is empty, start writing and keep the last chunk in buffer.
-            if buffer.isEmpty {
+            if count == 0 {
                 let bytesToWrite = bytes.count - (bytes.count % availableBufferSize)
                 writeImpl(UnsafeBufferPointer(start: bytes.baseAddress, count: bytesToWrite))
 
@@ -124,24 +128,26 @@ public class OutputByteStream: TextOutputStream {
                     return
                 }
                 // Otherwise keep remaining in buffer.
-                buffer += UnsafeBufferPointer(start: bytes.baseAddress! + bytesToWrite, count: bytes.count - bytesToWrite)
+                let cnt = bytes.count - bytesToWrite
+                (buffer + count).initialize(from:  bytes.baseAddress! + bytesToWrite, count: cnt)
+                count += cnt
                 return
             }
 
             // Append whatever we can accomodate.
-            buffer += UnsafeBufferPointer(start: bytes.baseAddress!, count: availableBufferSize)
+            (buffer + count).initialize(from: bytes.baseAddress!, count: availableBufferSize)
+            count += availableBufferSize
 
             dump()
             clearBuffer()
 
-    //        // FIXME: We should start again with remaining chunk but this doesn't work. Write everything for now.
-    //        write(collection: bytes.suffix(from: writeUptoIndex))
+            // FIXME: We should start again with remaining chunk but this doesn't work. Write everything for now.
             //write(UnsafeBufferPointer(start: bytes.baseAddress! + availableBufferSize, count: bytes.count - availableBufferSize))
             writeImpl(UnsafeBufferPointer(start: bytes.baseAddress! + availableBufferSize, count: bytes.count - availableBufferSize))
-    //        writeImpl(bytes.suffix(from: writeUptoIndex))
             return
         }
-        buffer += bytes
+        (buffer + count).initialize(from: bytes.baseAddress!, count: bytes.count)
+        count += bytes.count
     }
     
     /// Write a sequence of bytes to the buffer.
